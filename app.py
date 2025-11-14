@@ -40,8 +40,8 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("📁 Data source")
 data_source = st.sidebar.radio("Choose data source:", ["Use default file", "Upload CSV"])
 
-# default path (change if needed)
-DEFAULT_PATH = r'C:\Users\Nullvoid\Desktop\usa_housing.csv'
+# ✅ FIX — use dataset inside repository (NOT local Windows path)
+DEFAULT_PATH = "usa_housing.csv"     # <-- THIS IS THE FIX
 
 # ----------------------- Data Loading -----------------------
 @st.cache_data
@@ -52,15 +52,13 @@ def load_data_cached(path_or_buffer):
     else:
         # uploaded file-like
         df = pd.read_csv(path_or_buffer)
-    # Keep original dtypes, but ensure expected columns exist later
+    df.columns = df.columns.str.strip()
     return df
 
 def load_data(path_choice):
     """Wrapper to call cached loader and optionally fix simple issues."""
     try:
         df = load_data_cached(path_choice)
-        # Basic clean: strip column names whitespace
-        df.columns = df.columns.str.strip()
         return df
     except Exception as e:
         st.error(f"Error while loading dataset: {e}")
@@ -105,21 +103,21 @@ def main():
         if uploaded is not None:
             df = load_data(uploaded)
 
-    # If data failed to load, offer quick message and quit
+    # If data failed to load, show message and stop
     if df is None:
         st.title("🏠 House Price Prediction System")
         st.markdown("Please load a dataset using the sidebar (default path or upload).")
         return
 
-    # Validate columns and warn if missing
+    # Validate columns
     missing = validate_dataset(df)
     if missing:
-        st.warning(f"The dataset is missing expected columns: {missing}. The app expects columns: {EXPECTED_FEATURES + [TARGET]}")
-        # still allow viewing the dataset and visualizations, but block model pages
+        st.warning(f"The dataset is missing expected columns: {missing}. The app expects: {EXPECTED_FEATURES + [TARGET]}")
+
     # PAGE ROUTING
     if page == "🏠 Home":
         st.markdown('<div class="main-header">🏠 House Price Prediction System</div>', unsafe_allow_html=True)
-        st.write("Welcome! This app lets you train three regression models, compare them, and make predictions.")
+        st.write("Welcome! This app lets you explore data, train regression models, compare them, and make predictions.")
         show_data_preview(df)
 
     elif page == "📊 Data Overview":
@@ -156,7 +154,7 @@ def main():
     elif page == "🤖 Model Training":
         st.markdown('<h2 class="sub-header">🤖 Model Training</h2>', unsafe_allow_html=True)
         if missing:
-            st.error("Cannot train models because dataset is missing required columns. See Data Overview for details.")
+            st.error("Cannot train models. Dataset missing required columns.")
             return
 
         model_option = st.selectbox("Choose model to train", ["Linear Regression", "Ridge Regression", "Lasso Regression"])
@@ -175,31 +173,26 @@ def main():
                     st.error(f"Training failed: {e}")
                     return
 
-            # Save results in session_state
             st.session_state['trained_results'] = res
             st.success(f"{model_option} trained successfully!")
 
             st.write("### ✅ Test Metrics")
             st.json(res['metrics']['test'])
 
-            # Show simple plots: Actual vs Predicted (test)
+            # Actual vs Predicted
             if 'test_predictions' in res and 'y_test' in res:
-                try:
-                    y_true = pd.Series(res['y_test']).reset_index(drop=True)
-                    y_pred = pd.Series(res['test_predictions']).reset_index(drop=True)
-                    comp_df = pd.DataFrame({'Actual': y_true, 'Predicted': y_pred})
-                    st.write("### Actual vs Predicted (Test set)")
-                    fig = px.scatter(comp_df, x='Actual', y='Predicted', trendline="ols", title="Actual vs Predicted")
-                    st.plotly_chart(fig, use_container_width=True)
+                y_true = pd.Series(res['y_test']).reset_index(drop=True)
+                y_pred = pd.Series(res['test_predictions']).reset_index(drop=True)
+                comp_df = pd.DataFrame({'Actual': y_true, 'Predicted': y_pred})
 
-                    st.write("### Residuals (Test set)")
-                    comp_df['Residual'] = comp_df['Actual'] - comp_df['Predicted']
-                    fig2 = px.histogram(comp_df, x='Residual', nbins=50, title="Residuals Distribution")
-                    st.plotly_chart(fig2, use_container_width=True)
-                except Exception:
-                    pass
+                fig = px.scatter(comp_df, x='Actual', y='Predicted', trendline="ols", title="Actual vs Predicted")
+                st.plotly_chart(fig, use_container_width=True)
 
-            # Allow user to download the trained model
+                comp_df['Residual'] = comp_df['Actual'] - comp_df['Predicted']
+                fig2 = px.histogram(comp_df, x='Residual', nbins=50, title="Residuals Distribution")
+                st.plotly_chart(fig2, use_container_width=True)
+
+            # Download model
             try:
                 model_bytes = pickle.dumps(res['model'])
                 st.download_button(
@@ -208,19 +201,19 @@ def main():
                     file_name=f"trained_model_{model_option.replace(' ','_')}.pkl"
                 )
             except Exception:
-                st.info("Could not prepare model download for this model type.")
+                st.info("Could not prepare model download.")
 
     elif page == "🔮 Predictions":
         st.markdown('<h2 class="sub-header">🔮 Make Predictions</h2>', unsafe_allow_html=True)
 
         if 'trained_results' not in st.session_state:
-            st.warning("No trained model found in session. Train a model first on the Model Training page.")
+            st.warning("No trained model found. Train one on the Model Training page.")
             return
 
         res = st.session_state['trained_results']
         model = res['model']
-        # Build input form from EXPECTED_FEATURES (fall back to df medians if needed)
-        st.write("Enter feature values to predict house price.")
+
+        st.write("Enter feature values to predict house price:")
         cols = st.columns(2)
         user_values = {}
         for i, feat in enumerate(EXPECTED_FEATURES):
@@ -240,10 +233,10 @@ def main():
             except Exception as e:
                 st.error(f"Prediction failed: {e}")
 
-        # Batch prediction from a slice of the dataset
         st.markdown("---")
-        st.write("Or run batch predictions on a slice of the loaded dataset:")
-        nrows = st.number_input("Number of rows to predict (from top of dataset)", min_value=1, max_value=min(500, len(df)), value=20)
+        st.write("Batch prediction on top rows:")
+        nrows = st.number_input("Rows to predict", min_value=1, max_value=min(500, len(df)), value=20)
+
         if st.button("Predict on top rows"):
             try:
                 batch_df = df[EXPECTED_FEATURES].head(nrows)
@@ -258,8 +251,9 @@ def main():
 
     elif page == "📉 Model Comparison":
         st.markdown('<h2 class="sub-header">📉 Model Comparison</h2>', unsafe_allow_html=True)
+
         if missing:
-            st.error("Cannot compare models because dataset is missing required columns.")
+            st.error("Cannot compare models. Dataset missing required columns.")
             return
 
         if st.button("Train & Compare All Models"):
@@ -269,10 +263,9 @@ def main():
                     ridge = train_ridge_regression(df)
                     lasso = train_lasso_regression(df)
                 except Exception as e:
-                    st.error(f"One or more models failed to train: {e}")
+                    st.error(f"Model training error: {e}")
                     return
 
-            # Build comparison table from their 'metrics' -> 'test'
             comp = pd.DataFrame([
                 ["Linear Regression", linear['metrics']['test']['mae'], linear['metrics']['test']['rmse'], linear['metrics']['test']['r2']],
                 ["Ridge Regression", ridge['metrics']['test']['mae'], ridge['metrics']['test']['rmse'], ridge['metrics']['test']['r2']],
@@ -282,15 +275,16 @@ def main():
             st.write("### 📋 Comparison Table")
             st.dataframe(comp)
 
-            st.write("### 📈 Metric Charts")
+            st.write("### 📈 Charts")
             fig_rmse = px.bar(comp, x="Model", y="RMSE", text="RMSE", title="RMSE Comparison")
             st.plotly_chart(fig_rmse, use_container_width=True)
+
             fig_r2 = px.bar(comp, x="Model", y="R² Score", text="R² Score", title="R² Score Comparison")
             st.plotly_chart(fig_r2, use_container_width=True)
 
-            st.success("Comparison complete. You can inspect each model on the Model Training page and download them if needed.")
+            st.success("Comparison complete.")
         else:
-            st.info("Click **Train & Compare All Models** to run training for Linear, Ridge, and Lasso and view metrics.")
+            st.info("Click button to train and compare all models.")
 
 # Start
 if __name__ == "__main__":
